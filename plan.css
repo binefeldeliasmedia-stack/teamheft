@@ -236,3 +236,22 @@ textarea.prop-in{resize:none;line-height:1.5;display:block;min-height:38px;overf
 .seite-rahmen .viewhead{margin-bottom:8px}
 .freigabe{background:var(--bg)}
 details.sek{background:var(--karte);border-color:var(--kante)}
+
+/* Dateien + Links */
+.links{display:flex;flex-wrap:wrap;gap:6px}
+.links[hidden]{display:none}
+.link-chip{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:700;color:var(--ink);background:var(--st-blue-bg);border-radius:999px;padding:4px 11px 4px 9px;text-decoration:none;min-height:30px;max-width:100%}
+.link-chip:hover{text-decoration:underline}
+.lc-ic svg{width:14px;height:14px;display:block;color:var(--st-blue)}
+.dateien{display:flex;flex-direction:column;gap:6px}
+.dateien:empty{display:none}
+.datei{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:6px 10px}
+.datei.wartet{border-style:dashed}
+.datei-name{font:inherit;font-size:14px;font-weight:700;color:var(--ink);background:none;border:none;padding:4px 0;display:inline-flex;align-items:center;gap:7px;cursor:pointer;text-align:left;flex:1;min-width:10em}
+.datei-name svg{width:17px;height:17px;flex:none;color:var(--thread)}
+.datei-name span{overflow-wrap:anywhere}
+.datei-name:hover span{text-decoration:underline}
+.datei-info{font-size:12.5px;color:var(--muted)}
+.btn svg{width:16px;height:16px}
+.prop-dateien{display:flex;flex-direction:column;gap:6px;padding:4px 0}
+.anhang-btn{align-self:flex-start;font-size:13px;padding:5px 10px}

@@ -1,7 +1,7 @@
 /* Teamheft – App. Alle Inhalte kommen erst nach dem Zugang aus dem privaten Speicher.
    Hier im Code stehen keine Projektdaten, keine Namen, keine Schlüssel. */
 "use strict";
-const VERSION = 6;
+const VERSION = 7;
 const API = location.hostname === "localhost" ? "/api" : "https://script.google.com/macros/s/AKfycbzlsHkQ-WSGGli8pxzdu6SlnUSezGxXtf-ouaZDF3Ktzcj5AyUXuy8Jx-qXzkEnY5qT/exec";
 
 const MIC = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>';
@@ -127,8 +127,13 @@ const idb = (() => {
   function open() {
     if (dbp) return dbp;
     dbp = new Promise((res, rej) => {
-      const r = indexedDB.open("teamheft", 1);
-      r.onupgradeneeded = () => { r.result.createObjectStore("aufnahmen", { keyPath: "id" }); r.result.createObjectStore("stuecke", { autoIncrement: true }); };
+      const r = indexedDB.open("teamheft", 2);
+      r.onupgradeneeded = () => {
+        const db = r.result;
+        if (!db.objectStoreNames.contains("aufnahmen")) db.createObjectStore("aufnahmen", { keyPath: "id" });
+        if (!db.objectStoreNames.contains("stuecke")) db.createObjectStore("stuecke", { autoIncrement: true });
+        if (!db.objectStoreNames.contains("anhaenge")) db.createObjectStore("anhaenge", { keyPath: "id" });   // Dateien, bis Google sie hat
+      };
       r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
     });
     return dbp;
@@ -321,11 +326,12 @@ function feldBox(b, s, f) {
   const box = el("div", { class: "feld" }, el("div", { class: "feld-head" }, el("label", { for: "t-" + key, text: f.label })));
   if (f.stand) box.append(el("div", { class: "feld-stand", text: "Stand jetzt: " + f.stand }));
   if (f.proben) { const pr = el("div", { class: "proben" }); for (const p of f.proben) if (/^https:\/\//.test(p.url)) pr.append(el("a", { href: p.url, target: "_blank", rel: "noopener", text: "▶ " + p.name })); box.append(pr); }
-  box.append(ta, wer);
+  box.append(ta, wer, linkLeiste(ta));
   return box;
 }
 function hatInhalt(b, sek) {
   if (audiosFuer(b, sek.id).length) return true;
+  if (dateienListe(b, sek.id).length) return true;
   if (sek.typ === "szenen") return Object.values(H.szenen).some(z => z.folge === b && !z.weg && (z.gefuehl || z.kamera || z.aendern));
   if (sek.typ === "freigabe") { const m = meta(b, sek.id); return !!(m.skript || m.storyboard); }
   return (sek.felder || []).some(f => txt(b, sek.id, f.id).trim());
@@ -419,10 +425,9 @@ function sektion(b, sek, i) {
   const cb = el("input", { type: "checkbox", id: cid }); cb.checked = !!meta(b, sek.id).erledigt;
   cb.addEventListener("change", () => { setMeta(b, sek.id, { erledigt: cb.checked }); refreshPills(); fortschrittZeigen(); });
   row.append(el("label", { class: "check", for: cid }, cb, "Besprochen"));
-  const fi = el("input", { type: "file", accept: "image/*", class: "sr", id: "f-" + b + "-" + sek.id });
-  fi.addEventListener("change", () => { const file = fi.files && fi.files[0]; if (file) bildHoch(file, b, sek.id, bb); fi.value = ""; });
-  row.append(fi, el("label", { class: "btn", for: fi.id, text: "Foto anhängen", tabindex: "0", onkeydown: e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fi.click(); } } }));
-  body.append(bb, row);
+  const [fi, lbl] = anhangKnopf(b, sek.id, bb);
+  row.append(fi, lbl);
+  body.append(bb, dateienBox(b, sek.id), row);
   d.append(body);
   d._pill = pill; d._b = b; d._sek = sek;
   return d;
@@ -576,7 +581,7 @@ function uebernehmen(neu) {
     if (map && H[map][id]) { if (!neu[map]) neu[map] = {}; neu[map][id] = H[map][id]; }
   }
   const alt = H; H = neu;
-  for (const k of ["folgen", "felder", "meta", "szenen", "offen", "audios", "bilder", "claude", "karten", "besser"]) if (!H[k]) H[k] = {};
+  for (const k of ["folgen", "felder", "meta", "szenen", "offen", "audios", "bilder", "claude", "karten", "besser", "dateien"]) if (!H[k]) H[k] = {};
   const fokus = document.activeElement;
   const tippt = !!fokus && /INPUT|TEXTAREA|SELECT/.test(fokus.tagName) && ($("#view").contains(fokus) || $("#peek").contains(fokus));
   // Ansicht nur neu zeichnen, wenn sich ihr Aufbau geändert hat und niemand tippt oder zieht
@@ -630,7 +635,7 @@ async function start() {
     return;
   }
   ICH = r.ich; REV = r.rev; V = r.vorlage; H = r.heft;
-  for (const k of ["folgen", "felder", "meta", "szenen", "offen", "audios", "bilder", "claude", "karten", "besser"]) if (!H[k]) H[k] = {};
+  for (const k of ["folgen", "felder", "meta", "szenen", "offen", "audios", "bilder", "claude", "karten", "besser", "dateien"]) if (!H[k]) H[k] = {};
   // Noch nicht gesendete Texte vom letzten Mal sofort wieder anzeigen
   for (const j of Object.values(korbLesen())) {
     if (!j.data || !j.data.id) continue;
@@ -647,10 +652,10 @@ async function start() {
   folgenOhneKarte();
   try { history.replaceState({ tab }, ""); } catch (e) {}
   renderNav(); renderView();
-  korbNachholen(); aufnahmenNachholen();
+  korbNachholen(); aufnahmenNachholen(); anhaengeNachholen();
   setInterval(holen, 8000);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") holen(); });
-  window.addEventListener("beforeunload", e => { if (pending.size || wartend.length || rec) { e.preventDefault(); e.returnValue = ""; } });
+  window.addEventListener("beforeunload", e => { if (pending.size || wartend.length || rec || (PL.hoch || []).length) { e.preventDefault(); e.returnValue = ""; } });
 }
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 start();

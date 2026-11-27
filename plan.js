@@ -486,7 +486,13 @@ function renderFolgeSeite(c, id, modus) {
   notiz.value = k.notiz || "";
   notiz.addEventListener("input", () => { autoGrow(notiz); setKarte(id, { notiz: notiz.value }); });
   requestAnimationFrame(() => autoGrow(notiz));
-  props.append(propZeile(IC.text, "Notiz", notiz, "pl-notiz-" + id));
+  props.append(propZeile(IC.text, "Notiz", el("div", {}, notiz, linkLeiste(notiz)), "pl-notiz-" + id));
+  const fAnh = folgeVonKarte(k);
+  if (fAnh) {
+    const [fi, lbl] = anhangKnopf(fAnh, "seite", null);
+    lbl.classList.add("anhang-btn");
+    props.append(propZeile(IC.klammer, "Dateien", el("div", { class: "prop-dateien" }, dateienBox(fAnh, "seite"), fi, lbl), "pl-dateien-" + id));
+  }
   seite.append(props);
   seite._sync = () => { stZeichnen(); werZeichnen(); };
 
@@ -501,6 +507,7 @@ function renderFolgeSeite(c, id, modus) {
 function renderPeekOderSeite() { if (PL.peek) renderPeek(); else renderView(); renderNav(); }
 // Eigenschaften der offenen Seite mit neuen Daten abgleichen (ohne Neuzeichnen, ohne beim Tippen dazwischenzufunken)
 function seiteAbgleich() {
+  zeichneDateien();
   const fokus = document.activeElement;
   document.querySelectorAll(".seite[data-karte]").forEach(s => {
     const k = H.karten[s.dataset.karte]; if (!k) return;
@@ -552,7 +559,7 @@ function renderBesser(v) {
   if (!zeigen.length) liste.append(el("div", { class: "empty", text: PL.besserFilter === "fertig" ? "Noch nichts umgesetzt." : "Gerade nichts offen. Neue Erkenntnis? „Neuer Punkt“." }));
   const bereiche = [["", "–"], ["Serie", "Ganze Serie"], ...kartenListe().sort((a, b) => (a[1].nr || 0) - (b[1].nr || 0)).filter(([, k]) => k.nr).map(([, k]) => [fNr(k.nr), fNr(k.nr) + (k.titel ? " " + k.titel : "")])];
   for (const [id, b] of zeigen) {
-    const ta = (k, l, ph) => { const t = el("textarea", { id: "b-" + id + "-" + k, rows: "2", placeholder: ph }); t.value = b[k] || ""; t.addEventListener("input", () => { autoGrow(t); setBesser(id, { [k]: t.value }); }); requestAnimationFrame(() => autoGrow(t)); return el("div", { class: "feld" }, el("label", { for: t.id, class: "b-l", text: l }), t); };
+    const ta = (k, l, ph) => { const t = el("textarea", { id: "b-" + id + "-" + k, rows: "2", placeholder: ph }); t.value = b[k] || ""; t.addEventListener("input", () => { autoGrow(t); setBesser(id, { [k]: t.value }); }); requestAnimationFrame(() => autoGrow(t)); return el("div", { class: "feld" }, el("label", { for: t.id, class: "b-l", text: l }), t, linkLeiste(t)); };
     const wer = el("input", { type: "text", id: "b-" + id + "-wer", value: b.wer || "", placeholder: "Wer kümmert sich?" });
     wer.addEventListener("input", () => setBesser(id, { wer: wer.value }));
     const sel = el("select", { id: "b-" + id + "-folge" }, bereiche.map(([w, l]) => el("option", { value: w, text: l }))); sel.value = b.folge || "";
@@ -571,4 +578,112 @@ function renderBesser(v) {
       el("p", { class: "wer", text: (b.angelegtVon || b.von || "") + (b.angelegt ? " · " + zeit(b.angelegt) : "") + (b.erledigt && b.erledigtVon ? " · umgesetzt von " + b.erledigtVon : "") })));
   }
   v.append(liste);
+}
+
+// ---------- Dateien anhängen + antippbare Links ----------
+IC.link = svg('<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>');
+IC.datei = svg('<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 13h6M9 17h6"/>');
+IC.klammer = svg('<path d="M20 11l-8.5 8.5a5 5 0 0 1-7-7L13 4a3.3 3.3 0 0 1 4.7 4.7L9.2 17.2a1.7 1.7 0 0 1-2.4-2.4L14.5 7"/>');
+const LINK_RE = /https:\/\/[^\s<>"'`)\]]+/g;   // nur https-Links werden antippbar
+function linkName(u) {
+  try {
+    const x = new URL(u);
+    if (/(^|\.)docs\.google\.com$/.test(x.hostname)) return ({ document: "Google Doc", spreadsheets: "Google Tabelle", presentation: "Google Folien", forms: "Google Formular" })[x.pathname.split("/")[1]] || "Google Docs";
+    if (/(^|\.)drive\.google\.com$/.test(x.hostname)) return "Google Drive";
+    return x.hostname.replace(/^www\./, "");
+  } catch (e) { return u.slice(0, 40); }
+}
+// Leiste mit antippbaren Links unter einem Textfeld (liest den Text immer frisch aus dem Feld)
+function linkLeiste(feld) {
+  const box = el("div", { class: "links", "data-links": "" });
+  box._fill = () => {
+    const urls = [...new Set((feld.value || "").match(LINK_RE) || [])].slice(0, 12);
+    box.replaceChildren(...urls.map(u => el("a", { href: u, target: "_blank", rel: "noopener noreferrer", class: "link-chip", title: u }, el("span", { class: "lc-ic", html: IC.link }), el("span", { text: linkName(u) }))));
+    box.hidden = !urls.length;
+  };
+  feld.addEventListener("input", () => box._fill());
+  box._fill();
+  return box;
+}
+const groesse = n => n >= 1048576 ? (n / 1048576).toFixed(1).replace(".", ",") + " MB" : Math.max(1, Math.round((n || 0) / 1024)) + " KB";
+function dateienListe(b, s) { return Object.entries(H.dateien || {}).filter(([, x]) => x.bereich === b && x.sek === s && !x.weg).sort((x, y) => x[1].at - y[1].at); }
+function dateienBox(b, s) {
+  const box = el("div", { class: "dateien", "data-dateien": b + "/" + s });
+  box._fill = () => {
+    box.replaceChildren();
+    for (const [id, d] of dateienListe(b, s)) {
+      const auf = el("button", { type: "button", class: "datei-name", title: "Öffnen", html: IC.datei + "<span></span>" });
+      auf.querySelector("span").textContent = d.name || "Datei";
+      auf.addEventListener("click", async () => {
+        const sp = auf.querySelector("span"), t = sp.textContent; sp.textContent = "Lädt …";
+        try { const url = await datei(id); const a = el("a", { href: url, download: d.name || "Datei", target: "_blank", rel: "noopener" }); document.body.append(a); a.click(); a.remove(); }
+        catch (e) { toast(e && e.code === "zu_gross_zum_laden" ? "Die Datei ist zu groß für die App. Sie liegt im Drive-Ordner Team-App/dateien." : "Öffnen ging nicht. Bitte nochmal versuchen.", 6000); }
+        sp.textContent = t;
+      });
+      const zeile = el("div", { class: "datei" }, auf, el("span", { class: "datei-info", text: (d.von || "") + " · " + groesse(d.groesse) }));
+      if (d.von === ICH.name || ICH.rolle === "admin") {
+        let scharf = false; const weg = el("button", { type: "button", class: "link", text: "Entfernen" });
+        weg.addEventListener("click", async () => {
+          if (!scharf) { scharf = true; weg.textContent = "Wirklich?"; setTimeout(() => { scharf = false; weg.textContent = "Entfernen"; }, 3500); return; }
+          try { await call("weg", { id }); d.weg = true; box._fill(); } catch (e) { fehler(e); }
+        });
+        zeile.append(weg);
+      }
+      box.append(zeile);
+    }
+    for (const w of (PL.hoch || []).filter(w => w.b === b && w.s === s)) {
+      const z = el("div", { class: "datei wartet" }, el("span", { class: "datei-info", text: (w.fehler ? "Noch nicht bei Google, liegt sicher auf dem Gerät: " : "Wird hochgeladen … ") + w.name + " · " + groesse(w.groesse) }));
+      if (w.fehler && !w.laeuft) z.append(el("button", { type: "button", class: "btn", text: "Jetzt nochmal senden", onclick: () => anhangSenden(w) }));
+      box.append(z);
+    }
+  };
+  box._fill();
+  return box;
+}
+function zeichneDateien() { document.querySelectorAll("[data-dateien]").forEach(x => x._fill()); document.querySelectorAll("[data-links]").forEach(x => x._fill && x._fill()); }
+// Datei erst sicher aufs Gerät (IndexedDB), dann senden; klappt es nicht, wird automatisch nachgesendet (cid gegen Doppelte)
+async function dateiHoch(file, b, s) {
+  if (file.size > 20 * 1024 * 1024) return toast("„" + file.name + "“ ist zu groß (höchstens 20 MB). Große Dateien bitte in Drive legen und den Link einfügen.", 7000);
+  const w = { id: "d" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), b, s, name: file.name || "Datei", mime: file.type || "application/octet-stream", groesse: file.size, blob: file, at: Date.now() };
+  await idb.put("anhaenge", { id: w.id, b, s, name: w.name, mime: w.mime, groesse: w.groesse, blob: file, at: w.at });
+  PL.hoch = PL.hoch || []; PL.hoch.push(w);
+  anhangSenden(w);
+}
+async function anhangSenden(w) {
+  if (w.laeuft) return;
+  w.laeuft = true; w.fehler = false; zeichneDateien();
+  try {
+    const b64 = await blobToB64(w.blob);
+    const r = await call("anhang", { bereich: w.b, sek: w.s, name: w.name, mime: w.mime, groesse: w.groesse, cid: w.id, b64 });
+    H.dateien = H.dateien || {};
+    H.dateien[r.erg] = { bereich: w.b, sek: w.s, von: ICH.name, at: w.at, name: w.name, mime: w.mime, groesse: w.groesse, cid: w.id };
+    blobCache.set(r.erg, URL.createObjectURL(w.blob));
+    await idb.del("anhaenge", w.id);
+    PL.hoch.splice(PL.hoch.indexOf(w), 1);
+    toast("„" + w.name + "“ hängt jetzt dran");
+  } catch (e) {
+    w.fehler = true;
+    if (e && e.code === "zu_gross") { await idb.del("anhaenge", w.id); PL.hoch.splice(PL.hoch.indexOf(w), 1); toast("„" + w.name + "“ ist zu groß.", 6000); }
+    else toast("„" + w.name + "“ liegt sicher auf dem Gerät und wird automatisch nochmal gesendet.", 6000);
+  }
+  w.laeuft = false; zeichneDateien(); refreshPills();
+}
+async function anhaengeNachholen() {
+  PL.hoch = PL.hoch || [];
+  for (const a of await idb.all("anhaenge")) if (a && a.blob && !PL.hoch.some(x => x.id === a.id)) { const w = { ...a }; PL.hoch.push(w); anhangSenden(w); }
+}
+setInterval(() => { for (const w of PL.hoch || []) if (w.fehler && !w.laeuft) anhangSenden(w); }, 30000);
+// Knopf „Datei anhängen“: Bilder wie bisher als Foto (verkleinert), alles andere als Datei
+function anhangKnopf(b, s, bilderWrap) {
+  const id = "a-" + b + "-" + s;
+  const fi = el("input", { type: "file", multiple: true, class: "sr", id });
+  fi.addEventListener("change", () => {
+    for (const f of [...(fi.files || [])]) {
+      if (/^image\/(png|jpeg|webp|gif|heic)$/.test(f.type) && bilderWrap) bildHoch(f, b, s, bilderWrap);
+      else dateiHoch(f, b, s);
+    }
+    fi.value = "";
+  });
+  const lbl = el("label", { class: "btn", for: id, tabindex: "0", html: IC.klammer + "<span>Datei anhängen</span>", onkeydown: e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fi.click(); } } });
+  return [fi, lbl];
 }
