@@ -1,7 +1,7 @@
 /* Teamheft – App. Alle Inhalte kommen erst nach dem Zugang aus dem privaten Speicher.
    Hier im Code stehen keine Projektdaten, keine Namen, keine Schlüssel. */
 "use strict";
-const VERSION = 2;
+const VERSION = 3;
 const API = location.hostname === "localhost" ? "/api" : "https://script.google.com/macros/s/AKfycbzlsHkQ-WSGGli8pxzdu6SlnUSezGxXtf-ouaZDF3Ktzcj5AyUXuy8Jx-qXzkEnY5qT/exec";
 
 const MIC = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>';
@@ -477,10 +477,14 @@ function renderTabs() {
     if (fertig) t.append(el("span", { class: "fertig", title: "Fertig, Claude darf lesen" }));
     n.append(t);
   };
+  mk("plan", "Plan", String(aktivKarten()));
   const [a, c] = fortschritt("serie"); mk("serie", "Serien-Stil", a + "/" + c, (H.folgen.serie || {}).status === "fertig");
   for (const id of folgenIds()) { const [x, y] = fortschritt(id); mk(id, id, x + "/" + y, H.folgen[id].status === "fertig"); }
   n.append(el("button", { class: "tab add", type: "button", text: "+ Folge", onclick: neueFolge }));
   mk("offen", "Offene Punkte", String(Object.values(H.offen).filter(o => !o.erledigt && !o.weg).length));
+  mk("besser", "Besser machen", String(besserOffen()));
+  const gew = n.querySelector('[aria-selected="true"]');
+  if (gew && n.scrollWidth > n.clientWidth && (gew.offsetLeft < n.scrollLeft || gew.offsetLeft + gew.offsetWidth > n.scrollLeft + n.clientWidth)) n.scrollLeft = Math.max(0, gew.offsetLeft - 24);
 }
 function neueFolge() {
   const nums = folgenIds().map(id => parseInt(id.slice(1), 10));
@@ -510,6 +514,8 @@ function freigabeLeiste(b) {
 function renderView() {
   const v = $("#view"); v.replaceChildren();
   if (tab === "offen") return renderOffen(v);
+  if (tab === "plan") return renderPlan(v);
+  if (tab === "besser") return renderBesser(v);
   if (tab !== "serie" && !H.folgen[tab]) tab = "serie";
   const b = tab; const secs = sektionenFuer(b);
   const head = el("div", { class: "viewhead" });
@@ -561,13 +567,14 @@ function uebernehmen(neu) {
   // eigene, noch nicht gesendete Eingaben behalten
   for (const [key] of pending) {
     const [art, id] = [key.slice(0, key.indexOf(":")), key.slice(key.indexOf(":") + 1)];
-    const map = { feld: "felder", meta: "meta", folge: "folgen", szene: "szenen", offen: "offen" }[art];
-    if (map && H[map][id]) neu[map][id] = H[map][id];
+    const map = { feld: "felder", meta: "meta", folge: "folgen", szene: "szenen", offen: "offen", karte: "karten", besser: "besser" }[art];
+    if (map && H[map][id]) { if (!neu[map]) neu[map] = {}; neu[map][id] = H[map][id]; }
   }
   const alt = H; H = neu;
-  for (const k of ["folgen", "felder", "meta", "szenen", "offen", "audios", "bilder", "claude"]) if (!H[k]) H[k] = {};
+  for (const k of ["folgen", "felder", "meta", "szenen", "offen", "audios", "bilder", "claude", "karten", "besser"]) if (!H[k]) H[k] = {};
   const fokus = document.activeElement;
   const inView = fokus && $("#view").contains(fokus) && /INPUT|TEXTAREA|SELECT/.test(fokus.tagName);
+  if (planNeu(alt, inView)) return;
   // Struktur geändert? Dann neu zeichnen, wenn niemand tippt.
   const sig = h => JSON.stringify([Object.keys(h.folgen).sort(), Object.keys(h.claude).sort().map(k => h.claude[k].at), tab === "offen" ? Object.keys(h.offen).sort() : 0]);
   if (sig(alt) !== sig(H) && !inView) { renderTabs(); renderView(); return; }
@@ -617,7 +624,7 @@ async function start() {
     return;
   }
   ICH = r.ich; REV = r.rev; V = r.vorlage; H = r.heft;
-  for (const k of ["folgen", "felder", "meta", "szenen", "offen", "audios", "bilder", "claude"]) if (!H[k]) H[k] = {};
+  for (const k of ["folgen", "felder", "meta", "szenen", "offen", "audios", "bilder", "claude", "karten", "besser"]) if (!H[k]) H[k] = {};
   // Noch nicht gesendete Texte vom letzten Mal sofort wieder anzeigen
   for (const j of Object.values(korbLesen())) if (j.op === "feld" && j.data && j.data.id) H.felder[j.data.id] = { ...(H.felder[j.data.id] || {}), text: j.data.text, at: j.at, von: ICH.name };
   if (!V) return zeigeTor("Noch nicht eingerichtet", "Claude richtet das Heft gerade ein. Bitte später nochmal öffnen.");
