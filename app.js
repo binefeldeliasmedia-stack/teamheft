@@ -1,7 +1,7 @@
 /* Teamheft – App. Alle Inhalte kommen erst nach dem Zugang aus dem privaten Speicher.
    Hier im Code stehen keine Projektdaten, keine Namen, keine Schlüssel. */
 "use strict";
-const VERSION = 3;
+const VERSION = 4;
 const API = location.hostname === "localhost" ? "/api" : "https://script.google.com/macros/s/AKfycbzlsHkQ-WSGGli8pxzdu6SlnUSezGxXtf-ouaZDF3Ktzcj5AyUXuy8Jx-qXzkEnY5qT/exec";
 
 const MIC = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>';
@@ -51,7 +51,7 @@ let V = null;          // Vorlage
 let H = null;          // Heft
 let ICH = null;
 let REV = 0;
-let tab = ls.get("th-tab") || "serie";
+let tab = "folgen";   // die App startet immer im Board
 const pending = new Map(); // key -> {timer, data, busy, again, fn}
 
 const fid = (b, s, f) => `${b}__${s}__${f}`;
@@ -112,7 +112,7 @@ function fehler(e) {
   if (e && (e.code === "login_noetig" || e.code === "sitzung_abgelaufen")) return zeigeTor("Bitte neu anmelden", "Öffne deinen persönlichen Link nochmal.");
   zeigeStand();
 }
-function status(t, ok) { $("#statustext").textContent = t; $("#dot").classList.toggle("live", !!ok); }
+function status(t, ok) { $("#statustext").textContent = t; $("#dot").classList.toggle("live", !!ok); const d2 = $("#dot2"); if (d2) { d2.classList.toggle("live", !!ok); d2.title = t; } }
 
 // ---------- Geräte-Speicher (IndexedDB) für Aufnahmen ----------
 const idb = (() => {
@@ -469,36 +469,27 @@ function freigabeBox(b) {
 }
 
 // ---------- Ansichten ----------
-function renderTabs() {
-  const n = $("#tabs"); n.replaceChildren();
-  const mk = (id, label, extra, fertig) => {
-    const t = el("button", { class: "tab", type: "button", role: "tab", "aria-selected": tab === id ? "true" : "false", onclick: () => go(id) }, label);
-    if (extra) t.append(el("span", { class: "n", text: extra }));
-    if (fertig) t.append(el("span", { class: "fertig", title: "Fertig, Claude darf lesen" }));
-    n.append(t);
-  };
-  mk("plan", "Plan", String(aktivKarten()));
-  const [a, c] = fortschritt("serie"); mk("serie", "Serien-Stil", a + "/" + c, (H.folgen.serie || {}).status === "fertig");
-  for (const id of folgenIds()) { const [x, y] = fortschritt(id); mk(id, id, x + "/" + y, H.folgen[id].status === "fertig"); }
-  n.append(el("button", { class: "tab add", type: "button", text: "+ Folge", onclick: neueFolge }));
-  mk("offen", "Offene Punkte", String(Object.values(H.offen).filter(o => !o.erledigt && !o.weg).length));
-  mk("besser", "Besser machen", String(besserOffen()));
-  const gew = n.querySelector('[aria-selected="true"]');
-  if (gew && n.scrollWidth > n.clientWidth && (gew.offsetLeft < n.scrollLeft || gew.offsetLeft + gew.offsetWidth > n.scrollLeft + n.clientWidth)) n.scrollLeft = Math.max(0, gew.offsetLeft - 24);
+// tab: "folgen" (Board/Kalender, Start), "serie", "offen", "besser" oder "k:<Karten-ID>" (Folge als ganze Seite).
+// Am breiten Bildschirm öffnet eine Karte rechts als Seitenfenster (PL.peek).
+let SEITE = null; // Bereich (serie/F001 …), dessen Besprechungsheft gerade zu sehen ist
+function renderTabs() { renderNav(); }
+function go(id, ohneVerlauf) {
+  if (PL.peek) peekZu(true);
+  tab = id; if (!ohneVerlauf) try { history.pushState({ tab: id }, ""); } catch (e) {}
+  renderNav(); renderView(); window.scrollTo({ top: 0 });
 }
-function neueFolge() {
-  const nums = folgenIds().map(id => parseInt(id.slice(1), 10));
-  const nr = "F" + String((nums.length ? Math.max(...nums) : 0) + 1).padStart(3, "0");
-  H.folgen[nr] = { titel: "", at: Date.now() };
-  schreibe("folge:" + nr, "folge", { id: nr, patch: { titel: "" } }, 0);
-  go(nr);
-}
-function go(id) { tab = id; ls.set("th-tab", id); renderTabs(); renderView(); window.scrollTo({ top: 0 }); }
+window.addEventListener("popstate", e => {
+  const st = e.state || {};
+  if (PL.peek && !st.peek) { peekZu(true); return; }
+  if (st.tab && st.tab !== tab) { tab = st.tab; renderNav(); renderView(); }
+  if (st.peek && st.peek !== PL.peek) oeffneFolge(st.peek, true);
+});
+function neuZeichnen() { renderNav(); renderView(); if (PL.peek) renderPeek(); }
 function fortschrittZeigen() {
-  const p = $("#progress"); if (!p) return;
-  const [a, c] = fortschritt(tab); p.textContent = a + " von " + c + " Bereichen besprochen";
+  const p = $("#progress"); if (!p || !SEITE) return;
+  const [a, c] = fortschritt(SEITE); p.textContent = a + " von " + c + " Bereichen besprochen";
   $("#threadbar").style.width = (c ? a / c * 100 : 0) + "%";
-  renderTabs();
+  renderNav();
 }
 function freigabeLeiste(b) {
   const f = H.folgen[b] || {}; const fertig = f.status === "fertig";
@@ -507,31 +498,39 @@ function freigabeLeiste(b) {
   box.append(el("button", { type: "button", class: fertig ? "btn" : "btn ok", text: fertig ? "Wieder öffnen" : "Fertig, Claude darf lesen", onclick: () => {
     H.folgen[b] = { ...f, status: fertig ? "offen" : "fertig", statusVon: ICH.name, statusAt: Date.now() };
     schreibe("folge:" + b, "folge", { id: b, patch: { status: fertig ? "offen" : "fertig" } }, 0);
-    renderView(); renderTabs(); if (!fertig) toast("Claude ist Bescheid gegeben");
+    neuZeichnen(); if (!fertig) toast("Claude ist Bescheid gegeben");
   } }));
   return box;
 }
+function heftBereiche(b) {
+  // Besprechungsheft eines Bereichs: Fertig-Knopf, roter Faden, alle Abschnitte
+  SEITE = b;
+  const wrap = el("div", { class: "heft" });
+  wrap.append(freigabeLeiste(b), el("div", { class: "thread" }, el("span", { id: "threadbar" })), el("div", { class: "progress", id: "progress" }));
+  const list = el("div", { class: "sek-liste" });
+  sektionenFuer(b).forEach((s, i) => list.append(sektion(b, s, i)));
+  wrap.append(list);
+  return wrap;
+}
 function renderView() {
-  const v = $("#view"); v.replaceChildren();
-  if (tab === "offen") return renderOffen(v);
-  if (tab === "plan") return renderPlan(v);
-  if (tab === "besser") return renderBesser(v);
-  if (tab !== "serie" && !H.folgen[tab]) tab = "serie";
-  const b = tab; const secs = sektionenFuer(b);
-  const head = el("div", { class: "viewhead" });
-  if (b === "serie") head.append(el("h2", { text: "Serien-Stil" }), el("p", { class: "note", text: "Gilt für alle Folgen. Einmal festlegen, danach nur bewusst ändern." }));
-  else {
-    const f = H.folgen[b] || {};
-    const ti = el("input", { type: "text", id: "titel-" + b, value: f.titel || "", placeholder: "Titel der Folge" });
-    ti.addEventListener("input", () => { H.folgen[b] = { ...(H.folgen[b] || {}), titel: ti.value }; const t = ti.value; schreibe("folge:" + b, "folge", { id: b, patch: { titel: t } }); });
-    head.append(el("h2", { text: "Folge " + b.slice(1).replace(/^0+/, "") }), el("div", { class: "titlefield" }, el("label", { for: ti.id, text: "Titel" }), ti));
+  const v = $("#view"); v.replaceChildren(); SEITE = null;
+  document.body.dataset.tab = tab.startsWith("k:") ? "seite" : tab;
+  if (tab === "offen") { setzeTitel("Offene Punkte"); return renderOffen(seitenRahmen(v)); }
+  if (tab === "besser") { setzeTitel("Besser machen"); return renderBesser(seitenRahmen(v)); }
+  if (tab.startsWith("k:")) {
+    const id = tab.slice(2);
+    if (!H.karten[id] || H.karten[id].weg) { tab = "folgen"; return renderView(); }
+    setzeTitel(kName(H.karten[id]) + " " + (H.karten[id].titel || ""));
+    return renderFolgeSeite(seitenRahmen(v), id, "seite");
   }
-  head.append(freigabeLeiste(b), el("div", { class: "thread" }, el("span", { id: "threadbar" })), el("div", { class: "progress", id: "progress" }));
-  v.append(head);
-  const list = el("div", { style: "display:flex;flex-direction:column;gap:12px;margin-top:18px" });
-  secs.forEach((s, i) => list.append(sektion(b, s, i)));
-  v.append(list);
-  fortschrittZeigen();
+  if (tab === "serie") {
+    setzeTitel("Serien-Stil");
+    const r = seitenRahmen(v);
+    r.append(el("div", { class: "seitenkopf" }, el("h1", { class: "seiten-h", text: "Serien-Stil" }), el("p", { class: "note", text: "Gilt für alle Folgen. Einmal festlegen, danach nur bewusst ändern." })), heftBereiche("serie"));
+    fortschrittZeigen(); return;
+  }
+  tab = "folgen"; setzeTitel("Folgen");
+  renderFolgen(v);
 }
 function renderOffen(v) {
   v.append(el("div", { class: "viewhead" }, el("h2", { text: "Offene Punkte" }), el("p", { class: "note", text: "Was noch nicht entschieden ist: was, wer kümmert sich, bis wann. Erledigtes abhaken." })));
@@ -573,11 +572,12 @@ function uebernehmen(neu) {
   const alt = H; H = neu;
   for (const k of ["folgen", "felder", "meta", "szenen", "offen", "audios", "bilder", "claude", "karten", "besser"]) if (!H[k]) H[k] = {};
   const fokus = document.activeElement;
-  const inView = fokus && $("#view").contains(fokus) && /INPUT|TEXTAREA|SELECT/.test(fokus.tagName);
-  if (planNeu(alt, inView)) return;
-  // Struktur geändert? Dann neu zeichnen, wenn niemand tippt.
-  const sig = h => JSON.stringify([Object.keys(h.folgen).sort(), Object.keys(h.claude).sort().map(k => h.claude[k].at), tab === "offen" ? Object.keys(h.offen).sort() : 0]);
-  if (sig(alt) !== sig(H) && !inView) { renderTabs(); renderView(); return; }
+  const tippt = !!fokus && /INPUT|TEXTAREA|SELECT/.test(fokus.tagName) && ($("#view").contains(fokus) || $("#peek").contains(fokus));
+  // Ansicht nur neu zeichnen, wenn sich ihr Aufbau geändert hat und niemand tippt oder zieht
+  if (ansichtSig(alt) !== ansichtSig(H) && !tippt && !PL.drag && !POP) renderView();
+  if (PL.peek && peekSig(alt) !== peekSig(H) && !tippt) renderPeek();
+  renderNav();
+  seiteAbgleich();
   document.querySelectorAll("textarea[data-key]").forEach(ta => {
     if (ta === fokus) return; const f = H.felder[ta.dataset.key] || {};
     if (ta.value !== (f.text || "")) { ta.value = f.text || ""; autoGrow(ta); }
@@ -626,14 +626,21 @@ async function start() {
   ICH = r.ich; REV = r.rev; V = r.vorlage; H = r.heft;
   for (const k of ["folgen", "felder", "meta", "szenen", "offen", "audios", "bilder", "claude", "karten", "besser"]) if (!H[k]) H[k] = {};
   // Noch nicht gesendete Texte vom letzten Mal sofort wieder anzeigen
-  for (const j of Object.values(korbLesen())) if (j.op === "feld" && j.data && j.data.id) H.felder[j.data.id] = { ...(H.felder[j.data.id] || {}), text: j.data.text, at: j.at, von: ICH.name };
+  for (const j of Object.values(korbLesen())) {
+    if (!j.data || !j.data.id) continue;
+    if (j.op === "feld") H.felder[j.data.id] = { ...(H.felder[j.data.id] || {}), text: j.data.text, at: j.at, von: ICH.name };
+    if (j.op === "karte" || j.op === "besser") { const t = j.op === "karte" ? "karten" : "besser"; H[t][j.data.id] = { ...(H[t][j.data.id] || {}), ...(j.data.patch || {}) }; }
+  }
   if (!V) return zeigeTor("Noch nicht eingerichtet", "Claude richtet das Heft gerade ein. Bitte später nochmal öffnen.");
   document.title = V.titel || "Teamheft";
-  $("#eyebrow").textContent = (V.titel || "Teamheft") + " · " + (V.untertitel || "");
-  $("#titel").textContent = "Hallo " + ICH.name;
+  $("#sltitel").textContent = V.titel || "Teamheft";
+  $("#slzeichen").textContent = (V.titel || "T").replace(/^die\s+/i, "").slice(0, 1).toUpperCase();
+  $("#slwer").textContent = ICH.name;
   $("#app").hidden = false;
   status("Alles gespeichert · aktuell", true);
-  renderTabs(); renderView();
+  folgenOhneKarte();
+  try { history.replaceState({ tab }, ""); } catch (e) {}
+  renderNav(); renderView();
   korbNachholen(); aufnahmenNachholen();
   setInterval(holen, 8000);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") holen(); });

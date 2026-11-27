@@ -137,27 +137,41 @@ table.offen select{font:inherit;font-size:14px;background:var(--field);color:var
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 .version{font-size:12px;color:var(--muted);text-align:center;margin-top:30px}
 </style>
-<link rel="stylesheet" href="plan.css?v=3">
+<link rel="stylesheet" href="plan.css?v=4">
 </head>
 <body>
-<div class="wrap">
+<div class="wrap" id="torwrap">
   <section class="tor" id="tor" hidden>
     <p class="eyebrow">Teamheft</p>
     <h1 id="tortitel">Bitte deinen Link öffnen</h1>
     <p class="lead" id="tortext">Dieses Heft öffnet sich nur über deinen persönlichen Link. Den bekommst du von der Person, die dich eingeladen hat. Öffne ihn einmal, danach merkt sich dein Gerät den Zugang.</p>
   </section>
-  <div id="app" hidden>
-    <header>
-      <p class="eyebrow" id="eyebrow">Teamheft</p>
-      <h1 id="titel">Teamheft</h1>
-      <p class="lead">Tippt oder nehmt eine Sprachnachricht auf. Alles speichert sofort. Ist eine Folge fertig besprochen, drückt ihr „Fertig, Claude darf lesen“. Claude hört sich alles an, schreibt zurück, wie es euch verstanden hat, und stellt Rückfragen.</p>
+</div>
+<div id="app" class="shell" hidden>
+  <div class="sl-hinter" id="slhinter" hidden></div>
+  <aside class="seitenleiste" id="seitenleiste" aria-label="Navigation">
+    <div class="sl-kopf">
+      <span class="sl-zeichen" aria-hidden="true" id="slzeichen"></span>
+      <div class="sl-name"><b id="sltitel">Teamheft</b><span id="slwer"></span></div>
+    </div>
+    <nav id="nav" class="sl-nav" aria-label="Seiten"></nav>
+    <div class="sl-fuss">
       <div class="status"><span class="dot" id="dot"></span><span id="statustext">Lädt …</span></div>
-      <div class="banner" id="banner" hidden></div>
+      <p class="sl-hilfe">Alles speichert sofort. Ist eine Folge fertig besprochen: „Fertig, Claude darf lesen“.</p>
+      <p class="version" id="version"></p>
+    </div>
+  </aside>
+  <div class="haupt">
+    <header class="topbar">
+      <button class="icon-btn" id="menuknopf" type="button" aria-label="Menü" aria-expanded="false" aria-controls="seitenleiste"></button>
+      <span class="topbar-titel" id="topbartitel"></span>
+      <span class="dot" id="dot2" role="img" aria-label="Speicherstand"></span>
     </header>
-    <nav class="tabs" id="tabs" role="tablist" aria-label="Bereiche"></nav>
+    <div class="banner" id="banner" hidden></div>
     <main id="view"></main>
   </div>
-  <p class="version" id="version"></p>
+  <div class="peek-hinter" id="peekhinter" hidden></div>
+  <aside class="peek" id="peek" hidden aria-label="Folge"></aside>
 </div>
 <div class="recbar" id="recbar" hidden>
   <span class="recdot" aria-hidden="true"></span>
@@ -165,7 +179,7 @@ table.offen select{font:inherit;font-size:14px;background:var(--field);color:var
   <button class="btn primary" id="recstop" type="button">Stopp und speichern</button>
 </div>
 <div class="toast" id="toast" role="status" hidden></div>
-<script src="plan.js?v=3"></script>
-<script src="app.js?v=3"></script>
+<script src="plan.js?v=4"></script>
+<script src="app.js?v=4"></script>
 </body>
 </html>
