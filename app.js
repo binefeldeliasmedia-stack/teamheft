@@ -1,7 +1,7 @@
 /* Teamheft – App. Alle Inhalte kommen erst nach dem Zugang aus dem privaten Speicher.
    Hier im Code stehen keine Projektdaten, keine Namen, keine Schlüssel. */
 "use strict";
-const VERSION = 1;
+const VERSION = 2;
 const API = location.hostname === "localhost" ? "/api" : "https://script.google.com/macros/s/AKfycbzlsHkQ-WSGGli8pxzdu6SlnUSezGxXtf-ouaZDF3Ktzcj5AyUXuy8Jx-qXzkEnY5qT/exec";
 
 const MIC = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>';
@@ -62,51 +62,109 @@ const sektionenFuer = b => b === "serie" ? V.serie : (V.folgen[b] || V.folgeStan
 const fortschritt = b => { const s = sektionenFuer(b); return [s.filter(x => meta(b, x.id).erledigt).length, s.length]; };
 
 // Schreiben: pro Schlüssel eins nach dem anderen, kurz gebündelt
-function schreibe(key, fn, delay = 900) {
+// Ausgangskorb: jede Änderung liegt erst auf dem Gerät und wird so lange gesendet, bis Google sie bestätigt.
+const KORB = "th-korb";
+function korbLesen() { try { return JSON.parse(ls.get(KORB) || "{}"); } catch (e) { return {}; } }
+function korbSchreiben(k) { ls.set(KORB, JSON.stringify(k)); }
+function schreibe(key, op, data, delay = 900) {
+  const korb = korbLesen(); korb[key] = { op, data, at: Date.now() }; korbSchreiben(korb);
   let p = pending.get(key);
-  if (!p) { p = { timer: null, busy: false, again: false }; pending.set(key, p); }
-  p.fn = fn;
+  if (!p) { p = { timer: null, busy: false, again: false, versuch: 0 }; pending.set(key, p); }
+  p.job = { op, data };
   clearTimeout(p.timer);
   p.timer = setTimeout(() => flush(key), delay);
   status("Speichert …", false);
 }
 async function flush(key) {
-  const p = pending.get(key); if (!p) return;
+  const p = pending.get(key); if (!p || !p.job) return;
   if (p.busy) { p.again = true; return; }
-  p.busy = true; const fn = p.fn; p.fn = null;
-  try { await fn(); }
-  catch (e) { fehler(e); }
+  p.busy = true; const job = p.job; p.job = null;
+  let ok = false;
+  try { await call(job.op, job.data); ok = true; }
+  catch (e) { if (e && /kein_zugang|login_noetig|sitzung_abgelaufen/.test(e.code)) { p.busy = false; return fehler(e); } }
   p.busy = false;
-  if (p.again || p.fn) { p.again = false; if (p.fn) return flush(key); }
+  if (!ok) {
+    if (!p.job) p.job = job;                // nichts verlieren: gleiche Änderung nochmal
+    p.versuch = Math.min((p.versuch || 0) + 1, 6);
+    clearTimeout(p.timer); p.timer = setTimeout(() => flush(key), 2000 * p.versuch);
+    zeigeStand(); return;
+  }
+  p.versuch = 0;
+  if (p.job || p.again) { p.again = false; if (p.job) return flush(key); }
   pending.delete(key);
-  if (!pending.size) status("Alles gespeichert", true);
+  const korb = korbLesen(); if (korb[key] && korb[key].at <= Date.now()) { delete korb[key]; korbSchreiben(korb); }
+  zeigeStand();
+}
+function korbNachholen() {
+  const korb = korbLesen();
+  for (const [key, j] of Object.entries(korb)) if (!pending.has(key)) schreibe(key, j.op, j.data, 50);
+}
+function zeigeStand() {
+  const offen = pending.size, audio = wartend.length;
+  if (!offen && !audio) return status("Alles gespeichert", true);
+  const teile = [];
+  if (offen) teile.push(offen === 1 ? "1 Änderung" : offen + " Änderungen");
+  if (audio) teile.push(audio === 1 ? "1 Sprachnachricht" : audio + " Sprachnachrichten");
+  status(teile.join(" und ") + " noch nicht bei Google. Liegt sicher auf diesem Gerät und wird automatisch gesendet.", false);
 }
 function fehler(e) {
   if (e && e.code === "kein_zugang") return zeigeTor("Dein Link gilt nicht mehr", "Bitte frag nach einem neuen Link.");
-  status("Nicht gespeichert: keine Verbindung. Ich versuche es weiter, sobald du wieder tippst.", false);
+  if (e && (e.code === "login_noetig" || e.code === "sitzung_abgelaufen")) return zeigeTor("Bitte neu anmelden", "Öffne deinen persönlichen Link nochmal.");
+  zeigeStand();
 }
 function status(t, ok) { $("#statustext").textContent = t; $("#dot").classList.toggle("live", !!ok); }
 
+// ---------- Geräte-Speicher (IndexedDB) für Aufnahmen ----------
+const idb = (() => {
+  let dbp = null;
+  function open() {
+    if (dbp) return dbp;
+    dbp = new Promise((res, rej) => {
+      const r = indexedDB.open("teamheft", 1);
+      r.onupgradeneeded = () => { r.result.createObjectStore("aufnahmen", { keyPath: "id" }); r.result.createObjectStore("stuecke", { autoIncrement: true }); };
+      r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+    });
+    return dbp;
+  }
+  const tx = (store, mode, fn) => open().then(db => new Promise((res, rej) => {
+    const t = db.transaction(store, mode); const st = t.objectStore(store); const out = fn(st);
+    t.oncomplete = () => res(out && out.result !== undefined ? out.result : out); t.onerror = () => rej(t.error);
+  }));
+  return {
+    put: (store, v) => tx(store, "readwrite", st => st.put(v)).catch(() => {}),
+    add: (store, v) => tx(store, "readwrite", st => st.add(v)).catch(() => {}),
+    del: (store, k) => tx(store, "readwrite", st => st.delete(k)).catch(() => {}),
+    clear: store => tx(store, "readwrite", st => st.clear()).catch(() => {}),
+    all: store => tx(store, "readonly", st => st.getAll()).catch(() => [])
+  };
+})();
+
 // ---------- Aufnahme ----------
-let rec = null;
+let rec = null, wach = null;
 async function aufnehmen(ziel) {
   if (rec) { rec.mr.stop(); return; }
   if (!navigator.mediaDevices || !window.MediaRecorder) return toast("Aufnehmen geht in diesem Browser nicht. Bitte Safari oder Chrome nehmen.");
   let stream;
   try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
-  catch (e) { return toast("Kein Zugriff aufs Mikro. Bitte in den Einstellungen erlauben."); }
+  catch (e) { return toast("Kein Zugriff aufs Mikro. Bitte in den Einstellungen erlauben.", 5000); }
   const mime = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"].find(m => MediaRecorder.isTypeSupported(m)) || "";
   const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
   const chunks = [];
+  await idb.clear("stuecke");
+  idb.put("aufnahmen", { id: "laufend", ziel, t0: Date.now(), mime: mr.mimeType || mime, laufend: true });
   rec = { mr, t0: Date.now(), ziel, timer: null };
-  mr.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
-  mr.onstop = () => {
+  try { wach = await navigator.wakeLock.request("screen"); } catch (e) { wach = null; }
+  mr.ondataavailable = e => { if (e.data && e.data.size) { chunks.push(e.data); idb.add("stuecke", e.data); } };
+  mr.onstop = async () => {
     stream.getTracks().forEach(t => t.stop());
     const sek = (Date.now() - rec.t0) / 1000;
     clearInterval(rec.timer); rec = null; $("#recbar").hidden = true; markiereRec();
-    const blob = new Blob(chunks, { type: mr.mimeType || mime || "audio/webm" });
+    try { if (wach) await wach.release(); } catch (e) {} wach = null;
+    const blob = new Blob(chunks, { type: (mr.mimeType || mime || "audio/webm").split(";")[0] });
+    await idb.del("aufnahmen", "laufend"); await idb.clear("stuecke");
     if (sek < 1 || !blob.size) return toast("Zu kurz, nichts gespeichert.");
-    hochladen(blob, sek, ziel);
+    if (sek >= 15 * 60) toast("15 Minuten erreicht: gespeichert. Für mehr einfach neu aufnehmen.", 6000);
+    neueAufnahme(blob, sek, ziel);
   };
   mr.start(1000);
   $("#recziel").textContent = ziel.label;
@@ -125,24 +183,53 @@ function markiereRec() {
     b.querySelector("span").textContent = an ? "Stopp" : "Aufnehmen";
   });
 }
-const wartend = []; // {id, blob, sek, ziel, fehler}
+const wartend = []; // Aufnahmen, die noch nicht bei Google sind {id, blob, sek, ziel, fehler, laeuft}
 function blobToB64(blob) { return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(",")[1]); r.onerror = rej; r.readAsDataURL(blob); }); }
-async function hochladen(blob, sek, ziel, item) {
-  item = item || { id: "w" + Date.now(), blob, sek, ziel };
-  if (!wartend.includes(item)) wartend.push(item);
-  item.fehler = false; zeichneAudios();
+async function neueAufnahme(blob, sek, ziel) {
+  const item = { id: "w" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), blob, sek, ziel, at: Date.now() };
+  await idb.put("aufnahmen", { id: item.id, blob, sek, ziel, at: item.at });   // zuerst sicher aufs Gerät
+  wartend.push(item);
+  hochladen(item);
+}
+async function hochladen(item) {
+  if (item.laeuft) return;
+  item.laeuft = true; item.fehler = false; zeichneAudios(); zeigeStand();
   try {
     const b64 = await blobToB64(item.blob);
-    const r = await call("audio", { bereich: ziel.b, sek: ziel.s, feld: ziel.f || "", mime: item.blob.type, dauer: Math.round(item.sek), b64 });
+    const r = await call("audio", { bereich: item.ziel.b, sek: item.ziel.s, feld: item.ziel.f || "", mime: item.blob.type, dauer: Math.round(item.sek), cid: item.id, b64 });
     wartend.splice(wartend.indexOf(item), 1);
-    H.audios[r.erg] = { bereich: ziel.b, sek: ziel.s, feld: ziel.f || "", von: ICH.name, at: Date.now(), mime: item.blob.type, dauer: Math.round(item.sek) };
+    await idb.del("aufnahmen", item.id);
+    H.audios[r.erg] = { bereich: item.ziel.b, sek: item.ziel.s, feld: item.ziel.f || "", von: ICH.name, at: item.at, mime: item.blob.type, dauer: Math.round(item.sek), cid: item.id };
     blobCache.set(r.erg, URL.createObjectURL(item.blob));
     toast("Sprachnachricht gespeichert");
   } catch (e) {
-    item.fehler = true; toast("Sprachnachricht noch nicht gespeichert. Bitte „Nochmal senden“ drücken.", 5000);
+    item.fehler = true;
+    toast("Sprachnachricht liegt sicher auf dem Gerät und wird automatisch nochmal gesendet.", 5000);
   }
-  zeichneAudios(); refreshPills();
+  item.laeuft = false;
+  zeichneAudios(); refreshPills(); zeigeStand();
 }
+async function aufnahmenNachholen() {
+  // Abgebrochene Aufnahme (App geschlossen, Akku leer) aus den gesicherten Stücken wiederherstellen
+  const alle = await idb.all("aufnahmen");
+  const laufend = alle.find(a => a.id === "laufend");
+  if (laufend && !rec) {
+    const st = await idb.all("stuecke");
+    if (st.length) {
+      const blob = new Blob(st, { type: (laufend.mime || "audio/webm").split(";")[0] });
+      const sek = Math.max(1, st.length);
+      await idb.del("aufnahmen", "laufend"); await idb.clear("stuecke");
+      await neueAufnahme(blob, sek, laufend.ziel);
+      toast("Eine abgebrochene Aufnahme wurde gerettet und wird gespeichert.", 6000);
+    } else await idb.del("aufnahmen", "laufend");
+  }
+  for (const a of alle) {
+    if (a.id === "laufend" || wartend.some(w => w.id === a.id)) continue;
+    const item = { id: a.id, blob: a.blob, sek: a.sek, ziel: a.ziel, at: a.at };
+    wartend.push(item); hochladen(item);
+  }
+}
+setInterval(() => { for (const w of wartend) if (w.fehler && !w.laeuft) hochladen(w); }, 30000);
 const blobCache = new Map();
 async function datei(id) {
   if (blobCache.has(id)) return blobCache.get(id);
@@ -195,8 +282,12 @@ function audioBox(b, s) {
       box.append(item);
     }
     for (const w of wartend.filter(w => w.ziel.b === b && w.ziel.s === s)) {
-      const z = el("div", { class: "zeile" }, el("span", { class: "info", text: (w.fehler ? "Nicht gespeichert · " : "Wird gespeichert … · ") + dauer(w.sek) }));
-      if (w.fehler) z.append(el("button", { class: "btn", type: "button", text: "Nochmal senden", onclick: () => hochladen(w.blob, w.sek, w.ziel, w) }));
+      const z = el("div", { class: "zeile" }, el("span", { class: "info", text: (w.fehler ? "Noch nicht bei Google, liegt sicher auf dem Gerät · " : "Wird gespeichert … · ") + dauer(w.sek) }));
+      if (w.fehler) {
+        z.append(el("button", { class: "btn", type: "button", text: "Jetzt nochmal senden", onclick: () => hochladen(w) }));
+        const a = el("a", { class: "link", text: "Aufs Gerät laden", download: "Sprachnachricht " + zeit(w.at || Date.now()).replace(/[:.]/g, "-") + (w.blob.type.includes("mp4") ? ".m4a" : ".webm") });
+        a.href = URL.createObjectURL(w.blob); z.append(a);
+      }
       box.append(el("div", { class: "audio wartet" }, z));
     }
   };
@@ -216,7 +307,7 @@ function feldBox(b, s, f) {
     autoGrow(ta);
     H.felder[key] = { text: ta.value, at: Date.now(), von: ICH.name };
     const text = ta.value;
-    schreibe("feld:" + key, () => call("feld", { id: key, text }));
+    schreibe("feld:" + key, "feld", { id: key, text });
     refreshPills();
   });
   requestAnimationFrame(() => autoGrow(ta));
@@ -240,7 +331,7 @@ function pillFor(b, sek) {
 function setMeta(b, s, patch) {
   const id = `${b}__${s}`;
   H.meta[id] = { ...(H.meta[id] || {}), ...patch };
-  schreibe("meta:" + id, () => call("meta", { id, patch: { ...H.meta[id] } }), 200);
+  schreibe("meta:" + id, "meta", { id, patch: { ...H.meta[id] } }, 200);
 }
 function bilderBox(b, s) {
   const wrap = el("div", { class: "bilder", "data-bilder": b + "/" + s });
@@ -338,7 +429,7 @@ const szenenListe = b => Object.entries(H.szenen).filter(([, z]) => z.folge === 
 function setSzene(id, patch, delay) {
   H.szenen[id] = { ...(H.szenen[id] || {}), ...patch, at: Date.now() };
   const p = { ...H.szenen[id] }; delete p.at; delete p.von;
-  schreibe("szene:" + id, () => call("szene", { id, patch: p }), delay);
+  schreibe("szene:" + id, "szene", { id, patch: p }, delay);
 }
 function szenenBox(b) {
   const box = el("div", { class: "szenen", "data-szenen": b });
@@ -395,7 +486,7 @@ function neueFolge() {
   const nums = folgenIds().map(id => parseInt(id.slice(1), 10));
   const nr = "F" + String((nums.length ? Math.max(...nums) : 0) + 1).padStart(3, "0");
   H.folgen[nr] = { titel: "", at: Date.now() };
-  schreibe("folge:" + nr, () => call("folge", { id: nr, patch: { titel: "" } }), 0);
+  schreibe("folge:" + nr, "folge", { id: nr, patch: { titel: "" } }, 0);
   go(nr);
 }
 function go(id) { tab = id; ls.set("th-tab", id); renderTabs(); renderView(); window.scrollTo({ top: 0 }); }
@@ -411,7 +502,7 @@ function freigabeLeiste(b) {
   box.append(el("span", { class: "txt", text: fertig ? "Fertig gemeldet von " + (f.statusVon || "?") + ", " + zeit(f.statusAt) + ". Claude liest und schreibt zurück." : "Noch in Arbeit. Wenn alles drin ist: Claude Bescheid geben." }));
   box.append(el("button", { type: "button", class: fertig ? "btn" : "btn ok", text: fertig ? "Wieder öffnen" : "Fertig, Claude darf lesen", onclick: () => {
     H.folgen[b] = { ...f, status: fertig ? "offen" : "fertig", statusVon: ICH.name, statusAt: Date.now() };
-    schreibe("folge:" + b, () => call("folge", { id: b, patch: { status: fertig ? "offen" : "fertig" } }), 0);
+    schreibe("folge:" + b, "folge", { id: b, patch: { status: fertig ? "offen" : "fertig" } }, 0);
     renderView(); renderTabs(); if (!fertig) toast("Claude ist Bescheid gegeben");
   } }));
   return box;
@@ -426,7 +517,7 @@ function renderView() {
   else {
     const f = H.folgen[b] || {};
     const ti = el("input", { type: "text", id: "titel-" + b, value: f.titel || "", placeholder: "Titel der Folge" });
-    ti.addEventListener("input", () => { H.folgen[b] = { ...(H.folgen[b] || {}), titel: ti.value }; const t = ti.value; schreibe("folge:" + b, () => call("folge", { id: b, patch: { titel: t } })); });
+    ti.addEventListener("input", () => { H.folgen[b] = { ...(H.folgen[b] || {}), titel: ti.value }; const t = ti.value; schreibe("folge:" + b, "folge", { id: b, patch: { titel: t } }); });
     head.append(el("h2", { text: "Folge " + b.slice(1).replace(/^0+/, "") }), el("div", { class: "titlefield" }, el("label", { for: ti.id, text: "Titel" }), ti));
   }
   head.append(freigabeLeiste(b), el("div", { class: "thread" }, el("span", { id: "threadbar" })), el("div", { class: "progress", id: "progress" }));
@@ -443,7 +534,7 @@ function renderOffen(v) {
   const rows = Object.entries(H.offen).filter(([, o]) => !o.weg).sort((a, c) => (a[1].angelegt || a[1].at || 0) - (c[1].angelegt || c[1].at || 0));
   if (!rows.length) tbody.append(el("tr", {}, el("td", { colspan: "6", class: "note", text: "Noch keine offenen Punkte." })));
   for (const [id, o] of rows) {
-    const upd = (patch, d) => { H.offen[id] = { ...H.offen[id], ...patch }; const p = { ...H.offen[id] }; schreibe("offen:" + id, () => call("offen", { id, patch: { was: p.was, wer: p.wer, bis: p.bis, bereich: p.bereich, erledigt: p.erledigt, weg: p.weg } }), d); };
+    const upd = (patch, d) => { H.offen[id] = { ...H.offen[id], ...patch }; const p = { ...H.offen[id] }; schreibe("offen:" + id, "offen", { id, patch: { was: p.was, wer: p.wer, bis: p.bis, bereich: p.bereich, erledigt: p.erledigt, weg: p.weg } }, d); };
     const tr = el("tr", { class: o.erledigt ? "erledigt" : "" });
     const cb = el("input", { type: "checkbox", "aria-label": "Erledigt", id: "o-" + id + "-done" }); cb.checked = !!o.erledigt;
     cb.addEventListener("change", () => { upd({ erledigt: cb.checked }, 0); tr.className = cb.checked ? "erledigt" : ""; renderTabs(); });
@@ -460,7 +551,7 @@ function renderOffen(v) {
     el("button", { type: "button", class: "btn primary", text: "Punkt hinzufügen", onclick: () => {
       const id = "p" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
       H.offen[id] = { was: "", wer: "", bis: "", bereich: "Serie", erledigt: false, angelegt: Date.now() };
-      schreibe("offen:" + id, () => call("offen", { id, patch: { was: "", wer: "", bis: "", bereich: "Serie", erledigt: false } }), 0);
+      schreibe("offen:" + id, "offen", { id, patch: { was: "", wer: "", bis: "", bereich: "Serie", erledigt: false } }, 0);
       renderView(); renderTabs(); setTimeout(() => { const n = document.getElementById("o-" + id + "-was"); n && n.focus(); }, 30);
     } }), recButton(ziel)), audioBox("offen", "offen"));
 }
@@ -506,8 +597,8 @@ async function holen() {
   try {
     const r = await call("laden", { rev: REV });
     if (!r.unveraendert) { REV = r.rev; if (r.vorlage) V = r.vorlage; uebernehmen(r.heft); }
-    if (!pending.size) status("Alles gespeichert · aktuell", true);
-  } catch (e) { if (e.code === "kein_zugang") fehler(e); else status("Keine Verbindung. Versuche es gleich wieder …", false); }
+    zeigeStand();
+  } catch (e) { if (/kein_zugang|login_noetig|sitzung_abgelaufen/.test(e.code)) fehler(e); else if (!pending.size && !wartend.length) status("Gerade keine Verbindung. Eingaben bleiben auf dem Gerät und werden nachgesendet.", false); }
   polling = false;
 }
 
@@ -527,6 +618,8 @@ async function start() {
   }
   ICH = r.ich; REV = r.rev; V = r.vorlage; H = r.heft;
   for (const k of ["folgen", "felder", "meta", "szenen", "offen", "audios", "bilder", "claude"]) if (!H[k]) H[k] = {};
+  // Noch nicht gesendete Texte vom letzten Mal sofort wieder anzeigen
+  for (const j of Object.values(korbLesen())) if (j.op === "feld" && j.data && j.data.id) H.felder[j.data.id] = { ...(H.felder[j.data.id] || {}), text: j.data.text, at: j.at, von: ICH.name };
   if (!V) return zeigeTor("Noch nicht eingerichtet", "Claude richtet das Heft gerade ein. Bitte später nochmal öffnen.");
   document.title = V.titel || "Teamheft";
   $("#eyebrow").textContent = (V.titel || "Teamheft") + " · " + (V.untertitel || "");
@@ -534,6 +627,7 @@ async function start() {
   $("#app").hidden = false;
   status("Alles gespeichert · aktuell", true);
   renderTabs(); renderView();
+  korbNachholen(); aufnahmenNachholen();
   setInterval(holen, 8000);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") holen(); });
   window.addEventListener("beforeunload", e => { if (pending.size || wartend.length || rec) { e.preventDefault(); e.returnValue = ""; } });

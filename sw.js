@@ -1,6 +1,6 @@
 /* Service Worker: macht die App installierbar. Nur das Gerüst wird zwischengespeichert, nie Daten. */
-const CACHE = "teamheft-v1";
-const GERUEST = ["./", "./index.html", "./app.js?v=1", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png"];
+const CACHE = "teamheft-v2";
+const GERUEST = ["./", "./index.html", "./app.js?v=2", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(GERUEST)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", e => { e.waitUntil(caches.keys().then(k => Promise.all(k.filter(n => n !== CACHE).map(n => caches.delete(n)))).then(() => self.clients.claim())); });
 self.addEventListener("fetch", e => {
