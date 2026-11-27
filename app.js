@@ -2,7 +2,7 @@
    Hier im Code stehen keine Projektdaten, keine Namen, keine Schlüssel. */
 "use strict";
 const VERSION = 1;
-const API = location.hostname === "localhost" ? "/api" : "API_URL_HIER";
+const API = location.hostname === "localhost" ? "/api" : "https://script.google.com/macros/s/AKfycbzlsHkQ-WSGGli8pxzdu6SlnUSezGxXtf-ouaZDF3Ktzcj5AyUXuy8Jx-qXzkEnY5qT/exec";
 
 const MIC = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>';
 const $ = s => document.querySelector(s);
