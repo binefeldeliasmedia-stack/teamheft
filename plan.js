@@ -67,15 +67,11 @@ const datumLang = s => ausIso(s).toLocaleDateString("de-DE", { weekday: "short",
 
 function setKarte(id, patch, delay = 700) {
   H.karten[id] = { ...(H.karten[id] || {}), ...patch, at: Date.now(), von: ICH.name };
-  const k = H.karten[id], p = {};
-  for (const f of ["nr", "titel", "status", "wer", "erscheint", "bibelstelle", "notiz", "pos", "weg"]) if (f in k) p[f] = k[f];
-  schreibe("karte:" + id, "karte", { id, patch: p }, delay);
+  schreibePatch("karte:" + id, "karte", id, patch, delay);
 }
 function setBesser(id, patch, delay = 800) {
   H.besser[id] = { ...(H.besser[id] || {}), ...patch, at: Date.now(), von: ICH.name };
-  const b = H.besser[id], p = {};
-  for (const f of ["was", "anders", "wer", "folge", "erledigt", "weg"]) if (f in b) p[f] = b[f];
-  schreibe("besser:" + id, "besser", { id, patch: p }, delay);
+  schreibePatch("besser:" + id, "besser", id, patch, delay);
 }
 // Folgen, die schon ein Besprechungsheft haben, aber noch keine Karte: Karte mit fester ID nachziehen (Karte und Folge sind dasselbe)
 function folgenOhneKarte() {
@@ -425,7 +421,7 @@ function renderFolgeSeite(c, id, modus) {
     titel.value = titel.value.replace(/\n/g, " "); autoGrow(titel);
     setKarte(id, { titel: titel.value });
     const f = folgeVonKarte(H.karten[id]);
-    if (f && H.folgen[f]) { H.folgen[f] = { ...H.folgen[f], titel: titel.value }; const t = titel.value; schreibe("folge:" + f, "folge", { id: f, patch: { titel: t } }); }
+    if (f && H.folgen[f]) { H.folgen[f] = { ...H.folgen[f], titel: titel.value }; const t = titel.value; schreibePatch("folge:" + f, "folge", f, { titel: t }); }
     document.querySelectorAll(`.karte[data-id="${id}"] .k-t`).forEach(n => n.textContent = titel.value || "Ohne Titel");
     setzeTitel(kName(H.karten[id]) + " " + titel.value);
   });

@@ -1,7 +1,7 @@
 /* Teamheft – App. Alle Inhalte kommen erst nach dem Zugang aus dem privaten Speicher.
    Hier im Code stehen keine Projektdaten, keine Namen, keine Schlüssel. */
 "use strict";
-const VERSION = 5;
+const VERSION = 6;
 const API = location.hostname === "localhost" ? "/api" : "https://script.google.com/macros/s/AKfycbzlsHkQ-WSGGli8pxzdu6SlnUSezGxXtf-ouaZDF3Ktzcj5AyUXuy8Jx-qXzkEnY5qT/exec";
 
 const MIC = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>';
@@ -70,7 +70,7 @@ function schreibe(key, op, data, delay = 900) {
   const korb = korbLesen(); korb[key] = { op, data, at: Date.now() }; korbSchreiben(korb);
   let p = pending.get(key);
   if (!p) { p = { timer: null, busy: false, again: false, versuch: 0 }; pending.set(key, p); }
-  p.job = { op, data };
+  p.job = { op, data, at: korb[key].at };
   clearTimeout(p.timer);
   p.timer = setTimeout(() => flush(key), delay);
   status("Speichert …", false);
@@ -92,8 +92,15 @@ async function flush(key) {
   p.versuch = 0;
   if (p.job || p.again) { p.again = false; if (p.job) return flush(key); }
   pending.delete(key);
-  const korb = korbLesen(); if (korb[key] && korb[key].at <= Date.now()) { delete korb[key]; korbSchreiben(korb); }
+  // Nur löschen, was wirklich angekommen ist – eine neuere Änderung im Korb bleibt liegen
+  const korb = korbLesen(); if (korb[key] && korb[key].at <= (job.at || 0)) { delete korb[key]; korbSchreiben(korb); }
   zeigeStand();
+}
+// Nur die geänderten Felder schicken (mit noch nicht gesendeten Feldern derselben Sache zusammengelegt).
+// So überschreibt niemand, was ein anderer gleichzeitig an einem anderen Feld derselben Karte geändert hat.
+function schreibePatch(key, op, id, patch, delay) {
+  const k = korbLesen()[key]; const alt = (k && k.data && k.data.patch) || {};
+  schreibe(key, op, { id, patch: { ...alt, ...patch } }, delay);
 }
 function korbNachholen() {
   const korb = korbLesen();
@@ -331,7 +338,7 @@ function pillFor(b, sek) {
 function setMeta(b, s, patch) {
   const id = `${b}__${s}`;
   H.meta[id] = { ...(H.meta[id] || {}), ...patch };
-  schreibe("meta:" + id, "meta", { id, patch: { ...H.meta[id] } }, 200);
+  schreibePatch("meta:" + id, "meta", id, patch, 200);
 }
 function bilderBox(b, s) {
   const wrap = el("div", { class: "bilder", "data-bilder": b + "/" + s });
@@ -428,8 +435,7 @@ function refreshPills() {
 const szenenListe = b => Object.entries(H.szenen).filter(([, z]) => z.folge === b && !z.weg).sort((a, c) => (a[1].nr || 0) - (c[1].nr || 0));
 function setSzene(id, patch, delay) {
   H.szenen[id] = { ...(H.szenen[id] || {}), ...patch, at: Date.now() };
-  const p = { ...H.szenen[id] }; delete p.at; delete p.von;
-  schreibe("szene:" + id, "szene", { id, patch: p }, delay);
+  schreibePatch("szene:" + id, "szene", id, patch, delay);
 }
 function szenenBox(b) {
   const box = el("div", { class: "szenen", "data-szenen": b });
@@ -497,7 +503,7 @@ function freigabeLeiste(b) {
   box.append(el("span", { class: "txt", text: fertig ? "Fertig gemeldet von " + (f.statusVon || "?") + ", " + zeit(f.statusAt) + ". Claude liest und schreibt zurück." : "Noch in Arbeit. Wenn alles drin ist: Claude Bescheid geben." }));
   box.append(el("button", { type: "button", class: fertig ? "btn" : "btn ok", text: fertig ? "Wieder öffnen" : "Fertig, Claude darf lesen", onclick: () => {
     H.folgen[b] = { ...f, status: fertig ? "offen" : "fertig", statusVon: ICH.name, statusAt: Date.now() };
-    schreibe("folge:" + b, "folge", { id: b, patch: { status: fertig ? "offen" : "fertig" } }, 0);
+    schreibePatch("folge:" + b, "folge", b, { status: fertig ? "offen" : "fertig" }, 0);
     neuZeichnen(); if (!fertig) toast("Claude ist Bescheid gegeben");
   } }));
   return box;
@@ -539,7 +545,7 @@ function renderOffen(v) {
   const rows = Object.entries(H.offen).filter(([, o]) => !o.weg).sort((a, c) => (a[1].angelegt || a[1].at || 0) - (c[1].angelegt || c[1].at || 0));
   if (!rows.length) tbody.append(el("tr", {}, el("td", { colspan: "6", class: "note", text: "Noch keine offenen Punkte." })));
   for (const [id, o] of rows) {
-    const upd = (patch, d) => { H.offen[id] = { ...H.offen[id], ...patch }; const p = { ...H.offen[id] }; schreibe("offen:" + id, "offen", { id, patch: { was: p.was, wer: p.wer, bis: p.bis, bereich: p.bereich, erledigt: p.erledigt, weg: p.weg } }, d); };
+    const upd = (patch, d) => { H.offen[id] = { ...H.offen[id], ...patch }; schreibePatch("offen:" + id, "offen", id, patch, d); };
     const tr = el("tr", { class: o.erledigt ? "erledigt" : "" });
     const cb = el("input", { type: "checkbox", "aria-label": "Erledigt", id: "o-" + id + "-done" }); cb.checked = !!o.erledigt;
     cb.addEventListener("change", () => { upd({ erledigt: cb.checked }, 0); tr.className = cb.checked ? "erledigt" : ""; renderTabs(); });

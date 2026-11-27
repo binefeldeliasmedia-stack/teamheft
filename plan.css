@@ -122,11 +122,13 @@ body{padding:0}
 @media (max-width:899px){.board{padding-inline:16px;margin-inline:-16px;scroll-padding-inline:16px;scroll-snap-type:x proximity}}
 .board{scrollbar-width:thin;scrollbar-color:var(--line) transparent}
 .board.ohne-snap{scroll-snap-type:none}
-.spalte{flex:0 0 276px;border-radius:12px;padding:8px;background:color-mix(in srgb,var(--stbg) 55%,transparent);display:flex;flex-direction:column;gap:8px;scroll-snap-align:start}
-@media (max-width:899px){.spalte{flex-basis:min(82vw,300px)}}
+.spalte{flex:0 0 284px;width:284px;min-width:0;max-width:284px;border-radius:12px;padding:8px;background:color-mix(in srgb,var(--stbg) 55%,transparent);display:flex;flex-direction:column;gap:8px;scroll-snap-align:start}
+@media (max-width:899px){.spalte{flex-basis:min(82vw,300px);width:min(82vw,300px);max-width:min(82vw,300px)}}
 .sp-kopf{display:flex;flex-direction:row;align-items:center;gap:8px;padding:4px 4px 2px}
 .sp-n{color:var(--muted);font-size:13px;font-variant-numeric:tabular-nums}
-.sp-liste{display:flex;flex-direction:column;gap:8px;min-height:6px}
+.sp-liste{display:flex;flex-direction:column;gap:8px;min-height:6px;min-width:0}
+.spalte .karte,.k-props,.k-titel{min-width:0;max-width:100%}
+.k-t{min-width:0;overflow-wrap:anywhere}
 .sp-neu{font:inherit;font-size:14px;font-weight:600;color:var(--muted);background:none;border:none;border-radius:7px;padding:7px 8px;display:flex;gap:6px;align-items:center;cursor:pointer;width:100%;min-height:36px}
 .sp-neu:hover{background:var(--hover);color:var(--ink)}
 .sp-neu svg{width:16px;height:16px}
