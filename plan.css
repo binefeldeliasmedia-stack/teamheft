@@ -174,8 +174,8 @@ body.zieht,body.zieht *{-webkit-user-select:none;user-select:none;cursor:grabbin
 /* ---------- Seitenfenster ---------- */
 .peek-hinter{position:fixed;inset:0;z-index:39}
 .peek{position:fixed;top:0;right:0;bottom:0;width:min(960px,64vw);background:var(--paper);border-left:1px solid var(--line);box-shadow:-14px 0 40px rgba(0,0,0,.12);
-  overflow-y:auto;overscroll-behavior:contain;z-index:40;padding:0 44px 160px;animation:reinlaufen .18s ease-out}
-@keyframes reinlaufen{from{transform:translateX(24px);opacity:.4}to{transform:none;opacity:1}}
+  overflow-y:auto;overscroll-behavior:contain;z-index:40;padding:0 44px 160px;animation:reinlaufen .12s ease-out}
+@keyframes reinlaufen{from{transform:translateX(16px)}to{transform:none}}
 @media (prefers-reduced-motion:reduce){.peek{animation:none}}
 
 /* ---------- Folge als Seite ---------- */

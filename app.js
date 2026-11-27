@@ -1,7 +1,7 @@
 /* Teamheft – App. Alle Inhalte kommen erst nach dem Zugang aus dem privaten Speicher.
    Hier im Code stehen keine Projektdaten, keine Namen, keine Schlüssel. */
 "use strict";
-const VERSION = 4;
+const VERSION = 5;
 const API = location.hostname === "localhost" ? "/api" : "https://script.google.com/macros/s/AKfycbzlsHkQ-WSGGli8pxzdu6SlnUSezGxXtf-ouaZDF3Ktzcj5AyUXuy8Jx-qXzkEnY5qT/exec";
 
 const MIC = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>';
@@ -574,7 +574,7 @@ function uebernehmen(neu) {
   const fokus = document.activeElement;
   const tippt = !!fokus && /INPUT|TEXTAREA|SELECT/.test(fokus.tagName) && ($("#view").contains(fokus) || $("#peek").contains(fokus));
   // Ansicht nur neu zeichnen, wenn sich ihr Aufbau geändert hat und niemand tippt oder zieht
-  if (ansichtSig(alt) !== ansichtSig(H) && !tippt && !PL.drag && !POP) renderView();
+  if (ansichtSig(alt) !== ansichtSig(H)) { if (!tippt && ruhig()) renderView(); else PL.spaeter = true; }
   if (PL.peek && peekSig(alt) !== peekSig(H) && !tippt) renderPeek();
   renderNav();
   seiteAbgleich();

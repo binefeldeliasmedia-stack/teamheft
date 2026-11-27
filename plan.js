@@ -3,7 +3,16 @@
    Status, Namen und Termine kommen aus der Vorlage im privaten Speicher, nie aus dem Code.
    Ziehen geht mit Maus und Finger (Pointer Events): auf dem Handy kurz gedrückt halten, dann ziehen. */
 "use strict";
-const PL = { ansicht: "board", monat: null, filter: "", drag: null, peek: null, besserFilter: "offen", boardLeft: 0 };
+const PL = { ansicht: "board", monat: null, filter: "", drag: null, druck: false, spaeter: false, peek: null, besserFilter: "offen", boardLeft: 0 };
+// Darf die Ansicht gerade neu gezeichnet werden? Nicht beim Ziehen, nicht mit gedrückter Karte, nicht mit offenem Menü.
+const ruhig = () => !PL.drag && !PL.druck && !POP;
+function nachholen() {
+  if (!PL.spaeter || !ruhig()) return;
+  const f = document.activeElement;
+  if (f && /INPUT|TEXTAREA|SELECT/.test(f.tagName) && $("#view").contains(f)) return;
+  PL.spaeter = false; renderView();
+}
+document.addEventListener("focusout", () => setTimeout(nachholen, 80));
 let POP = null;
 try { PL.ansicht = localStorage.getItem("th-ansicht") || "board"; PL.filter = localStorage.getItem("th-plan-filter") || ""; } catch (e) {}
 
@@ -154,6 +163,7 @@ function popAuf(anker, fuellen) {
 function popZu() {
   if (!POP) return; const { p, zu, scroll, anker } = POP; POP = null;
   p.remove(); document.removeEventListener("pointerdown", zu, true); document.removeEventListener("scroll", scroll, true);
+  setTimeout(nachholen, 0);
   if (anker && document.contains(anker)) try { anker.focus({ preventScroll: true }); } catch (e) {}
 }
 const statusPill = s => el("span", { class: "pill-st " + stKlasse(s), text: s || "" });
@@ -167,6 +177,7 @@ function ziehbar(node, id, onTap) {
   node.addEventListener("pointerdown", e => {
     if (e.button !== 0 || PL.drag) return;
     const sx = e.clientX, sy = e.clientY, pid = e.pointerId, finger = e.pointerType !== "mouse";
+    PL.druck = true;
     let aktiv = false, weg = false, timer = null, lx = sx, ly = sy;
     const los = () => { aktiv = true; ziehStart(node, id, lx, ly); };
     if (finger) timer = setTimeout(() => { if (!weg) { los(); try { navigator.vibrate && navigator.vibrate(12); } catch (x) {} } }, 300);
@@ -187,8 +198,9 @@ function ziehbar(node, id, onTap) {
       if (aktiv && PL.drag && ev.type === "pointerup") { PL.drag.x = ev.clientX; PL.drag.y = ev.clientY; ziehBild(true); }
       if (aktiv) ziehEnde(ev.type === "pointercancel");
       else if (!weg && ev.type === "pointerup") onTap();
+      setTimeout(nachholen, 0);
     };
-    const ende = () => { clearTimeout(timer); window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); window.removeEventListener("pointercancel", up); };
+    const ende = () => { PL.druck = false; clearTimeout(timer); window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); window.removeEventListener("pointercancel", up); };
     window.addEventListener("pointermove", move, { passive: false });
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", up);
@@ -234,8 +246,8 @@ function ziehEnde(abbruch) {
   d.geist.remove(); d.node.classList.remove("wird-gezogen"); document.body.classList.remove("zieht");
   if (d.ziel) d.ziel.classList.remove("drop-ziel"); if (d.vor) d.vor.classList.remove("davor");
   const board = document.querySelector(".board"); if (board) { board.classList.remove("ohne-snap"); PL.boardLeft = board.scrollLeft; }
-  PL.drag = null;
-  if (abbruch || !d.ziel) return;
+  PL.drag = null; PL.spaeter = false;
+  if (abbruch || !d.ziel) { renderView(); return; }
   const k = H.karten[d.id]; if (!k) return;
   const dd = d.ziel.dataset.drop, art = dd.slice(0, dd.indexOf(":")), wert = dd.slice(dd.indexOf(":") + 1);
   if (art === "tag") {
@@ -275,7 +287,8 @@ function renderFolgen(v) {
     el("button", { type: "button", class: "filter-weg", "aria-label": "Filter aufheben", html: IC.zu + "<span>Alle zeigen</span>", onclick: () => { PL.filter = ""; try { localStorage.setItem("th-plan-filter", ""); } catch (e) {} renderView(); } })) : null;
   wrap.append(
     el("div", { class: "folgen-kopf" }, el("h1", { class: "seiten-h", text: "Folgen" }), cfg.hinweis ? el("p", { class: "note", text: cfg.hinweis }) : null),
-    el("div", { class: "ansicht-leiste" }, ansichten, el("span", { class: "spacer" }), filterKnopf, neu), filterHinweis);
+    el("div", { class: "ansicht-leiste" }, ansichten, el("span", { class: "spacer" }), filterKnopf, neu));
+  if (filterHinweis) wrap.append(filterHinweis);
   v.append(wrap);
   if (PL.ansicht === "kalender") renderKalender(wrap); else renderBoard(wrap);
 }
